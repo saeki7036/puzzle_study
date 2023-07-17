@@ -4,6 +4,14 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
+    const int TRANS_TIME = 3;
+    const int ROT_TIME = 3;
+
+    const int FALL_COUNT_UNIT = 120;
+    const int FALL_COUNT_SPD = 10;
+    const int FALL_COUNT_FAST_SPD = 20;
+    const int GROUND_FRAMES = 50;
+
     enum RotState
     {
         Up = 0,
@@ -19,6 +27,16 @@ public class PlayerController : MonoBehaviour
 
     Vector2Int _position;
     RotState _rotate = RotState.Up;
+
+    AnimationController _animationController = new AnimationController();
+    Vector2Int _last_position;
+    RotState _last_rotate = RotState.Up;
+
+    LogicalInput logicalInput = new();
+
+    int _fallCount = 0;
+    int _groundFrame = GROUND_FRAMES;
+
     // Start is called before the first frame update
     void Start()
     {
@@ -51,79 +69,36 @@ public class PlayerController : MonoBehaviour
         return true;
     }
 
+    void SetTransition(Vector2Int pos, RotState rot, int time)
+    {
+        _last_position = _position;
+        _last_rotate = _rotate;
+
+        _position = pos;
+        _rotate = rot;
+
+        _animationController.Set(time);
+    }
+
     private bool Translate(bool is_right) 
     {
         Vector2Int pos = _position + (is_right ? Vector2Int.right : Vector2Int.left);
         if (!CanMove(pos, _rotate)) return false;
 
-        _position = pos;
-
-        _puyoControllers[0].SetPos(new Vector3((float)_position.x, (float)_position.y, 0.0f));
-        Vector2Int posChild = CalcChildPuyoPos(_position, _rotate);
-        _puyoControllers[1].SetPos(new Vector3((float)posChild.x, (float)posChild.y, 0.0f));
+        SetTransition(pos, _rotate, TRANS_TIME);
 
         return true;
     }
 
-    // Update is called once per frame
-    void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.RightArrow))
-        {
-            Translate(true);
-        }
-        if (Input.GetKeyDown(KeyCode.LeftArrow))
-        {
-            Translate(false);
-        }
-
-        if (Input.GetKeyDown(KeyCode.X))
-        {
-            Rotate(true);
-        }
-        if (Input.GetKeyDown(KeyCode.Z))
-        {
-            Rotate(false);
-        }
-
-        if (Input.GetKeyDown(KeyCode.UpArrow))
-        {
-            QuickDrop();
-        }
-    }
-
-    void QuickDrop()
-    {
-        Vector2Int pos = _position;
-        do
-        {
-            pos += Vector2Int.down;
-        } while (CanMove(pos, _rotate));
-        pos -= Vector2Int.down;
-
-        _position = pos;
-
-        bool is_set0 = boardController.Settle(_position,
-            (int)_puyoControllers[0].GetPuyoType());
-        Debug.Assert(is_set0); 
-
-        bool is_set1 = boardController.Settle(CalcChildPuyoPos(_position, _rotate),
-            (int)_puyoControllers[1].GetPuyoType());
-        Debug.Assert(is_set1);
-
-        gameObject.SetActive(false);
-    }
-
-    bool Rotate (bool is_right)
+    bool Rotate(bool is_right)
     {
         RotState rot = (RotState)(((int)_rotate + (is_right ? +1 : +3)) & 3);
 
         Vector2Int pos = _position;
-
         switch (rot)
         {
             case RotState.Down:
-                if(!boardController.CanSettle(pos + Vector2Int.down) ||
+                if (!boardController.CanSettle(pos + Vector2Int.down) ||
                    !boardController.CanSettle(pos + new Vector2Int(is_right ? 1 : -1, -1)))
                 {
                     pos += Vector2Int.up;
@@ -148,15 +123,151 @@ public class PlayerController : MonoBehaviour
                 break;
 
         }
-        if(!CanMove(pos, rot)) return false;
+        if (!CanMove(pos, rot)) return false;
 
-        _position = pos;
-        _rotate = rot;
-
-        _puyoControllers[0].SetPos(new Vector3((float)_position.x, (float)_position.y, 0.0f));
-        Vector2Int posChild = CalcChildPuyoPos(_position, _rotate);
-        _puyoControllers[1].SetPos(new Vector3((float)posChild.x, (float)posChild.y, 0.0f));
+        SetTransition(pos, rot, ROT_TIME);
 
         return true;
+    }
+
+    void Settle()
+    {
+        bool is_set0 = boardController.Settle(_position,
+            (int)_puyoControllers[0].GetPuyoType());
+        Debug.Assert(is_set0);
+
+        bool is_set1 = boardController.Settle(CalcChildPuyoPos(_position, _rotate),
+            (int)_puyoControllers[1].GetPuyoType());
+        Debug.Assert(is_set1);
+
+        gameObject.SetActive(false);
+    }
+
+    void QuickDrop()
+    {
+        Vector2Int pos = _position;
+        do
+        {
+            pos += Vector2Int.down;
+        } while (CanMove(pos, _rotate));
+        pos -= Vector2Int.down;
+
+        _position = pos;
+
+        Settle();
+    }
+
+    static readonly KeyCode[] key_code_tdl = new KeyCode[(int)LogicalInput.Key.MAX]
+    {
+        KeyCode.RightArrow,
+        KeyCode.LeftArrow,
+        KeyCode.X,
+        KeyCode.Z,
+        KeyCode.UpArrow,
+        KeyCode.DownArrow,
+    };
+
+    void UpdateInput()
+    {
+        LogicalInput.Key inputDev = 0;
+
+        for(int i = 0; i < (int)LogicalInput.Key.MAX; i++)
+        {
+            if (Input.GetKey(key_code_tdl[i]))
+            {
+                inputDev |= (LogicalInput.Key)(1 << i);
+            }
+        }
+
+        logicalInput.Update(inputDev);
+    }
+
+    bool Fall (bool is_fast)
+    {
+        _fallCount -= is_fast ? FALL_COUNT_FAST_SPD : FALL_COUNT_SPD;
+
+        while(_fallCount < 0)
+        {
+            if(!CanMove(_position + Vector2Int.down, _rotate))
+            {
+                _fallCount = 0;
+                if (0 < --_groundFrame)
+                    return true;
+
+                Settle();
+                return false;
+            }
+
+            _position += Vector2Int.down;
+            _last_position += Vector2Int.down;
+            _fallCount += FALL_COUNT_UNIT;
+        }
+
+       return true;
+    }
+
+    void Control()
+    {
+        if (!Fall(logicalInput.IsRaw(LogicalInput.Key.Down)))
+            return;
+
+        if (_animationController.Update())
+            return;
+
+        if (logicalInput.IsRepeat(LogicalInput.Key.Right))
+        {
+            if(Translate(true)) return;
+        }
+        if (logicalInput.IsRepeat(LogicalInput.Key.Left))
+        {
+            if(Translate(false)) return;
+        }
+
+        if (logicalInput.IsTrigger(LogicalInput.Key.RotR))
+        {
+            if(Rotate(true)) return; 
+        }
+        if (logicalInput.IsTrigger(LogicalInput.Key.RotL))
+        {
+            if(Rotate(false)) return;
+        }
+
+        if (logicalInput.IsRelease(LogicalInput.Key.QuickDrop))
+        {
+            QuickDrop();
+        }
+    }
+
+    // Update is called once per frame
+    void FixedUpdate()
+    {
+        UpdateInput();
+
+        Control();
+        
+        Vector3 dy = Vector3.up * (float)_fallCount / (float)FALL_COUNT_UNIT;
+        float anim_rate = _animationController.GetNormalized();
+        _puyoControllers[0].SetPos(dy + Interpolate(_position, RotState.Invalid, _last_position, RotState.Invalid, anim_rate));
+        _puyoControllers[1].SetPos(dy + Interpolate(_position, _rotate, _last_position, _last_rotate, anim_rate));
+    }
+
+    static Vector3 Interpolate(Vector2Int pos, RotState rot, Vector2Int pos_last, RotState rot_last,float rate)
+    {
+        Vector3 p = Vector3.Lerp(
+            new Vector3((float)pos.x ,(float)pos.y, 0.0f),
+            new Vector3((float)pos_last.x, (float)pos_last.y, 0.0f), rate);
+
+        if(rot == RotState.Invalid) return p;
+
+        float theta0 = 0.5f * Mathf.PI * (float)(int)rot;
+        float theta1 = 0.5f * Mathf.PI * (float)(int)rot_last;
+        float theta = theta1 - theta0;
+
+        if (+Mathf.PI < theta) theta = theta - 2.0f * Mathf.PI;
+        if (theta < -Mathf.PI) theta = theta + 2.0f * Mathf.PI;
+
+        theta = theta0 + rate * theta;
+
+        return p + new Vector3(Mathf.Sin(theta), Mathf.Cos(theta), 0.0f);
     }
 }
