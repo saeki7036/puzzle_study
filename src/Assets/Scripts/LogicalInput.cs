@@ -56,7 +56,6 @@ public class LogicalInput
         }
     }
 
-   
     public void Update(Key inputDev)
     {
         inputTrg = (inputDev ^ inputRaw) & inputDev;
