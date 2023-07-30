@@ -12,6 +12,8 @@ interface IState
         GameOver = 1,
         Falling = 2,
         Erasing = 3,
+        Waiting = 4,
+
         MAX,
 
         Unchanged,
@@ -39,12 +41,15 @@ public class PlayDirector : MonoBehaviour
     uint _score = 0;
     int _chainCount = -1;
 
+    bool _canSpawn = false;
+
     static readonly IState[] states = new IState[(int)IState.E_State.MAX]
     {
         new ControlState(),
         new GameOverState(),
         new FallingState(),
         new ErasingState(),
+        new WaitingState(),
     };
 
     // Start is called before the first frame update
@@ -56,8 +61,11 @@ public class PlayDirector : MonoBehaviour
         _playerController.SetLogicalInput(_logicalInput);
 
         _nextQueue.Initialize();
+        UpdateNextsView();
 
         InitializeState();
+
+        SetScore(0);
     }
 
     void UpdateNextsView()
@@ -181,12 +189,26 @@ public class PlayDirector : MonoBehaviour
                 return IState.E_State.Unchanged;
             }
             parent._chainCount = 0;
-            return IState.E_State.Control;
+            return parent._canSpawn ? IState.E_State.Control : IState.E_State.Waiting;
+
         }
         public IState.E_State Update(PlayDirector parent)
         {
             return parent._boardController.Erase() ? IState.E_State.Unchanged : IState.E_State.Falling;
         }
+    }
+
+    class WaitingState : IState
+    {
+        public IState.E_State Initialize(PlayDirector parent)
+        {
+            return IState.E_State.Unchanged;
+        }
+        public IState.E_State Update(PlayDirector parent)
+        {
+            return parent._canSpawn ? IState.E_State.Control : IState.E_State.Unchanged;
+        }
+
     }
 
     bool Spawn(Vector2Int next) => _playerController.Spawn(
@@ -201,5 +223,14 @@ public class PlayDirector : MonoBehaviour
     void AddScore(uint score)
     {
         if(0 < score) SetScore(_score + score);
+    }
+
+    public void EnableSpawn(bool enable)
+    {
+        _canSpawn = enable;
+    }
+    public bool IsGameOver()
+    {
+        return _current_state == IState.E_State.GameOver;
     }
 }
